@@ -13,6 +13,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: |
+            requirements-native.txt
+            requirements-build.txt
       - run: python -m pip install -r requirements-native.txt -r requirements-build.txt
       - run: python -m unittest discover -s tests -v
       - run: python examples/generate_validation_samples.py
