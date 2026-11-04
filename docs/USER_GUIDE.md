@@ -1,4 +1,14 @@
-# User guide — Version 1.0.0
+# User guide — Version 1.1.0
+
+## Workspace layout
+
+The workbench uses three adjustable columns. **Settings** on the left contains
+calibration, recipe, detection and region controls; collapse a section when it
+is not needed. The **centre** keeps the calibrated image and overlay above a
+dropdown-selectable measurements, statistics, distribution or QA view.
+**Diagnostics** on the right contains the run control, release state and model
+warnings. Drag either vertical divider or the image/results divider to suit the
+screen; the workbench remembers these proportions between sessions.
 
 ## 1. Before measuring
 

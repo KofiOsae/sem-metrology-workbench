@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use SEM Metrology Workbench in research, cite the software release and report its version."
 title: "SEM Metrology Workbench"
 type: software
-version: 1.0.0
-date-released: 2026-11-04
+version: 1.1.0
+date-released: 2026-11-05
 authors:
   - name: "KofiOsae"
 license: BSD-3-Clause

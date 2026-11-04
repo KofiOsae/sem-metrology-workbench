@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 — 2026-11-05
+
+- Laptop-first three-column workspace with settings, visualization/results and diagnostics.
+- Collapsible settings and guidance sections reduce vertical scrolling.
+- Centre-view selector switches measurements, statistics, plots and QA without wide tabs.
+- Adjustable horizontal and vertical splitters retain their proportions between sessions.
+- Compact toolbar and two-row summary cards preserve analysis space on smaller screens.
+- GitHub Actions updated to current supported checkout and Python setup actions.
+
 ## 1.0.0 — 2026-11-04
 
 - Native standalone Windows metrology workbench.

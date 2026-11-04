@@ -8,14 +8,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import Qt, Signal, QRectF, QLineF
+from PySide6.QtCore import Qt, Signal, QRectF, QLineF, QSettings
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPainterPath, QPixmap, QPen, QPdfWriter, QPageSize, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
-    QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout,
+    QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView, QGroupBox, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QDoubleSpinBox, QToolTip,
-    QScrollArea, QSpinBox, QSplitter, QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser,
-    QToolBar, QVBoxLayout, QWidget,
+    QScrollArea, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser,
+    QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from sem_metrology.calibration import Calibration, detect_footer, detect_scale_bar, read_sem_companion_metadata
@@ -33,11 +33,11 @@ from sem_metrology.studies import common_study_metrics, dose_response_summary
 from sem_metrology.waveguide import analyze_waveguide, waveguide_overlay
 
 REFERENCE_TAUGHT_RECIPES = frozenset((0, 1, 2, 4))
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 APP_STYLE = """
 QMainWindow, QWidget { background: #10151c; color: #dce5ee; font-family: 'Segoe UI'; font-size: 10pt; }
-QToolBar { background: #171e27; border-bottom: 1px solid #2d3947; spacing: 8px; padding: 6px; }
+QToolBar { background: #171e27; border-bottom: 1px solid #2d3947; spacing: 4px; padding: 3px; }
 QToolButton, QPushButton { background: #243141; border: 1px solid #3a4b5e; border-radius: 4px; padding: 7px 12px; }
 QToolButton:hover, QPushButton:hover { background: #304258; }
 QPushButton#runButton { background: #007f86; border-color: #19a4aa; font-weight: 600; }
@@ -52,6 +52,8 @@ QTabBar::tab:selected { background: #24404a; color: #9ee7e8; }
 QLabel#metricValue { font-size: 17pt; font-weight: 650; color: #f1f6fa; }
 QLabel#metricName { color: #8fa1b2; }
 QFrame#metricCard { background: #17212b; border: 1px solid #2e3a47; border-radius: 5px; }
+QToolButton#sectionHeader { background: #19232e; border: 1px solid #2e3a47; border-radius: 4px; padding: 7px; text-align: left; color: #8fd8dc; font-weight: 600; }
+QToolButton#sectionHeader:checked { background: #22303d; }
 QLabel#qaGood { color: #65d38e; font-weight: 650; }
 QLabel#qaWarn { color: #f0ba59; font-weight: 650; }
 QLabel#qaBad { color: #ef7474; font-weight: 650; }
@@ -218,6 +220,21 @@ class MetricCard(QFrame):
         self.name = QLabel(name); self.name.setObjectName("metricName")
         self.value = QLabel("—"); self.value.setObjectName("metricValue")
         layout.addWidget(self.name); layout.addWidget(self.value)
+
+
+class CollapsibleSection(QWidget):
+    """Compact settings section suited to short laptop displays."""
+    def __init__(self, title: str, content: QWidget, expanded: bool = True):
+        super().__init__()
+        layout=QVBoxLayout(self); layout.setContentsMargins(0,0,0,0); layout.setSpacing(3)
+        self.header=QToolButton(); self.header.setObjectName("sectionHeader"); self.header.setCheckable(True); self.header.setChecked(expanded)
+        self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly); self.content=content
+        if isinstance(content,QGroupBox): content.setTitle("")
+        self.header.toggled.connect(self._toggle); layout.addWidget(self.header); layout.addWidget(content)
+        self.title=title; self._toggle(expanded)
+
+    def _toggle(self, expanded: bool):
+        self.content.setVisible(expanded); self.header.setText(("▼  " if expanded else "▶  ")+self.title)
 
 
 class DistributionPlot(QWidget):
@@ -440,8 +457,8 @@ class MetrologyWorkbench(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"SEM Metrology Workbench {APP_VERSION}")
-        self.resize(1480, 920)
-        self.setMinimumSize(1050, 680)
+        self.resize(1360, 820)
+        self.setMinimumSize(960, 600)
         self.rgb = self.analysis_rgb = self.overlay_rgb = None
         self.image_path = None; self.calibration = None; self.footer_start = None; self.sem_metadata={}; self.metadata_sampling_um=None; self.source_warning=None
         self.feature_rows = []; self.measurements = []; self.reference_roi = None; self.analysis_roi = None; self.analysis_polygon=None; self.exclusion_polygon=None; self.plot_series = {}; self.plot_metadata={}; self.pixel_mode=False; self.cross_section_records=[]; self.cross_section_overlays=[]
@@ -484,16 +501,11 @@ class MetrologyWorkbench(QMainWindow):
         about_action = QAction("&About / cite", self); about_action.triggered.connect(self.show_about)
         help_menu.addActions([tutorials_action,workflow_action,capabilities_action,definitions_action,cross_definitions_action,study_help_action,about_action])
 
-        toolbar = QToolBar("Main"); toolbar.setMovable(False); self.addToolBar(toolbar)
-        toolbar.addAction(open_action); toolbar.addAction(export_action); toolbar.addAction(export_plot_action); toolbar.addSeparator(); toolbar.addAction(reset_action); toolbar.addAction(fit_action); toolbar.addAction(workflow_action); toolbar.addAction(texture_action); toolbar.addAction(line_gauge_action); toolbar.addSeparator(); toolbar.addAction(add_study_action); toolbar.addAction(open_study_action)
+        toolbar = QToolBar("Main"); toolbar.setMovable(False); toolbar.setFloatable(False); self.addToolBar(toolbar)
+        toolbar.addAction(open_action); toolbar.addAction(reset_action); toolbar.addAction(fit_action); toolbar.addSeparator(); toolbar.addAction(workflow_action); toolbar.addAction(texture_action); toolbar.addAction(line_gauge_action)
 
-        root = QWidget(); root_layout = QVBoxLayout(root); root_layout.setContentsMargins(8, 8, 8, 8)
-        cards_layout = QHBoxLayout(); self.cards = [MetricCard(x) for x in ("Objects / bands", "Primary mean", "Variation (CV)", "Release status")]
-        for card in self.cards: cards_layout.addWidget(card)
-        root_layout.addLayout(cards_layout)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.image_view = ImageView(); self.image_view.referenceSelected.connect(self._reference_selected); self.image_view.analysisSelected.connect(self._analysis_selected); self.image_view.analysisMaskSelected.connect(self._analysis_mask_selected); self.image_view.lineSelected.connect(self._line_selected); self.image_view.interfacePointSelected.connect(self._layer_interface_clicked); splitter.addWidget(self.image_view)
+        root = QWidget(); root_layout = QVBoxLayout(root); root_layout.setContentsMargins(5, 5, 5, 5)
+        self.image_view = ImageView(); self.image_view.referenceSelected.connect(self._reference_selected); self.image_view.analysisSelected.connect(self._analysis_selected); self.image_view.analysisMaskSelected.connect(self._analysis_mask_selected); self.image_view.lineSelected.connect(self._line_selected); self.image_view.interfacePointSelected.connect(self._layer_interface_clicked)
         controls = QWidget(); controls_layout = QVBoxLayout(controls)
 
         calibration_group = QGroupBox("Calibration & traceability"); cal_form = QFormLayout(calibration_group)
@@ -506,7 +518,7 @@ class MetrologyWorkbench(QMainWindow):
         self.allow_pixel_mode=QCheckBox("Allow original-image pixel units when scale is unavailable")
         self.redraw_scale_button=QPushButton("Redraw scale-bar endpoints"); self.redraw_scale_button.clicked.connect(self._begin_scale_bar_redraw)
         cal_form.addRow("Scale-bar value", scale_row); cal_form.addRow("Detected bar", self.detected_bar); cal_form.addRow(self.redraw_scale_button); cal_form.addRow("Sampling", self.sampling_label); cal_form.addRow(self.confirm_calibration); cal_form.addRow(self.allow_pixel_mode)
-        controls_layout.addWidget(calibration_group)
+        controls_layout.addWidget(CollapsibleSection("Calibration & traceability", calibration_group, True))
 
         recipe_group = QGroupBox("Physical measurement model"); recipe_form = QFormLayout(recipe_group)
         self.recipe = QComboBox(); self.recipe.addItems(["Circular outlines / holes", "Rectangular / elongated periodic array", "Irregular particles / grains", "Line-space / grating", "Single feature / contour ROI", "Curved / tapered waveguide ROI", "Cross-section feature ROI", "Layer stack / film cross-section ROI"])
@@ -543,26 +555,55 @@ class MetrologyWorkbench(QMainWindow):
         self.full_region_button=QPushButton("Use full specimen area"); self.full_region_button.clicked.connect(self._clear_analysis_region)
         region_row=QWidget(); region_layout=QHBoxLayout(region_row); region_layout.setContentsMargins(0,0,0,0); region_layout.addWidget(self.analysis_region_button); region_layout.addWidget(self.analysis_mask_button); region_layout.addWidget(self.mask_behavior); region_layout.addWidget(self.full_region_button)
         self.analysis_region_label=QLabel("Full specimen area"); recipe_form.addRow("Analysis region",region_row); recipe_form.addRow("Region status",self.analysis_region_label)
-        controls_layout.addWidget(recipe_group)
+        controls_layout.addWidget(CollapsibleSection("Measurement settings", recipe_group, True))
 
         qa_group = QGroupBox("Measurement release gate"); qa_layout = QVBoxLayout(qa_group)
         self.qa_label = QLabel("WAITING — load and calibrate an image"); self.qa_label.setObjectName("qaWarn"); self.qa_label.setWordWrap(True)
         self.qa_detail = QLabel("Results are released only when calibration, sampling, population, and model-fit checks pass."); self.qa_detail.setWordWrap(True)
         self.model_warning_label = QLabel("Model compatibility not yet evaluated"); self.model_warning_label.setWordWrap(True)
         qa_layout.addWidget(self.qa_label); qa_layout.addWidget(self.model_warning_label); qa_layout.addWidget(self.qa_detail)
-        controls_layout.addWidget(qa_group)
         self.run_button = QPushButton("Run model-based analysis"); self.run_button.setObjectName("runButton"); self.run_button.clicked.connect(self.run_analysis)
-        controls_layout.addWidget(self.run_button); controls_layout.addStretch()
-        control_scroll = QScrollArea(); control_scroll.setWidgetResizable(True); control_scroll.setFrameShape(QFrame.Shape.NoFrame); control_scroll.setMinimumWidth(300); control_scroll.setWidget(controls)
-        splitter.addWidget(control_scroll); splitter.setCollapsible(0, False); splitter.setCollapsible(1, False); splitter.setSizes([1050, 360])
+        controls_layout.addStretch()
+        control_scroll = QScrollArea(); control_scroll.setWidgetResizable(True); control_scroll.setFrameShape(QFrame.Shape.NoFrame); control_scroll.setMinimumWidth(235); control_scroll.setWidget(controls)
 
-        self.tabs = QTabWidget(); self.results_table = QTableWidget(); self.stats_table = QTableWidget(); self.qa_table = QTableWidget()
+        self.tabs = QStackedWidget(); self.results_table = QTableWidget(); self.stats_table = QTableWidget(); self.qa_table = QTableWidget()
         plot_page = QWidget(); plot_layout = QVBoxLayout(plot_page); plot_controls = QHBoxLayout()
         plot_controls.addWidget(QLabel("Plotted metric")); self.plot_metric = QComboBox(); self.plot_metric.currentIndexChanged.connect(self._update_plot); plot_controls.addWidget(self.plot_metric); plot_controls.addStretch()
         self.distribution_plot = DistributionPlot(); plot_layout.addLayout(plot_controls); plot_layout.addWidget(self.distribution_plot)
-        self.tabs.addTab(self.results_table, "Measurements"); self.tabs.addTab(self.stats_table, "Statistical report"); self.tabs.addTab(plot_page, "Distribution & control plots"); self.tabs.addTab(self.qa_table, "QA & traceability")
-        self.vertical_splitter=QSplitter(Qt.Orientation.Vertical); self.vertical_splitter.addWidget(splitter); self.vertical_splitter.addWidget(self.tabs); self.vertical_splitter.setSizes([570,330])
-        root_layout.addWidget(self.vertical_splitter, 1); self.setCentralWidget(root); self.setStatusBar(QStatusBar())
+        for page in (self.results_table,self.stats_table,plot_page,self.qa_table): self.tabs.addWidget(page)
+        self.result_view=QComboBox(); self.result_view.addItems(["Measurements","Statistical summary","Distribution & control plots","QA & traceability"])
+        self.result_view.currentIndexChanged.connect(self.tabs.setCurrentIndex); self.tabs.currentChanged.connect(self.result_view.setCurrentIndex)
+        result_header=QHBoxLayout(); result_header.addWidget(QLabel("Centre view")); result_header.addWidget(self.result_view,1)
+
+        centre=QWidget(); centre_layout=QVBoxLayout(centre); centre_layout.setContentsMargins(4,0,4,0); centre_layout.setSpacing(5)
+        cards_layout=QGridLayout(); cards_layout.setSpacing(5); self.cards=[MetricCard(x) for x in ("Objects / bands","Primary mean","Variation (CV)","Release status")]
+        for index,card in enumerate(self.cards): cards_layout.addWidget(card,index//2,index%2)
+        centre_layout.addLayout(cards_layout)
+        image_panel=QWidget(); image_layout=QVBoxLayout(image_panel); image_layout.setContentsMargins(0,0,0,0); image_layout.addWidget(self.image_view)
+        results_panel=QWidget(); results_layout=QVBoxLayout(results_panel); results_layout.setContentsMargins(0,0,0,0); results_layout.addLayout(result_header); results_layout.addWidget(self.tabs)
+        self.vertical_splitter=QSplitter(Qt.Orientation.Vertical); self.vertical_splitter.addWidget(image_panel); self.vertical_splitter.addWidget(results_panel); self.vertical_splitter.setSizes([430,310]); self.vertical_splitter.setChildrenCollapsible(False)
+        centre_layout.addWidget(self.vertical_splitter,1)
+
+        diagnostics=QWidget(); diagnostics_layout=QVBoxLayout(diagnostics); diagnostics_layout.setContentsMargins(4,0,4,0)
+        diagnostics_layout.addWidget(self.run_button)
+        diagnostics_layout.addWidget(CollapsibleSection("Release diagnostics",qa_group,True))
+        quick_help=QGroupBox("Workspace guidance"); quick_help_layout=QVBoxLayout(quick_help)
+        quick_help_text=QLabel("1. Select a recipe and calibration on the left.\n2. Review the overlay and selectable result view in the centre.\n3. Resolve warnings here before accepting or exporting results.")
+        quick_help_text.setWordWrap(True); quick_help_layout.addWidget(quick_help_text); diagnostics_layout.addWidget(CollapsibleSection("Guidance",quick_help,False)); diagnostics_layout.addStretch()
+        diagnostic_scroll=QScrollArea(); diagnostic_scroll.setWidgetResizable(True); diagnostic_scroll.setFrameShape(QFrame.Shape.NoFrame); diagnostic_scroll.setMinimumWidth(230); diagnostic_scroll.setWidget(diagnostics)
+
+        self.workspace_splitter=QSplitter(Qt.Orientation.Horizontal); self.workspace_splitter.addWidget(control_scroll); self.workspace_splitter.addWidget(centre); self.workspace_splitter.addWidget(diagnostic_scroll)
+        self.workspace_splitter.setChildrenCollapsible(False); self.workspace_splitter.setSizes([290,760,290]); self.workspace_splitter.setStretchFactor(0,0); self.workspace_splitter.setStretchFactor(1,1); self.workspace_splitter.setStretchFactor(2,0)
+        root_layout.addWidget(self.workspace_splitter,1); self.setCentralWidget(root); self.setStatusBar(QStatusBar())
+        settings=QSettings("KofiOsae","SEM Metrology Workbench")
+        workspace_state=settings.value("workspaceSplitter"); result_state=settings.value("resultSplitter")
+        if workspace_state is not None: self.workspace_splitter.restoreState(workspace_state)
+        if result_state is not None: self.vertical_splitter.restoreState(result_state)
+
+    def closeEvent(self,event):
+        settings=QSettings("KofiOsae","SEM Metrology Workbench")
+        settings.setValue("workspaceSplitter",self.workspace_splitter.saveState()); settings.setValue("resultSplitter",self.vertical_splitter.saveState())
+        super().closeEvent(event)
 
     def _recipe_changed(self):
         taught_model = self.recipe.currentIndex() in REFERENCE_TAUGHT_RECIPES
@@ -917,7 +958,7 @@ class MetrologyWorkbench(QMainWindow):
             "Operator-guided dimensional metrology for SEM images\n\n"
             "Copyright © 2026 SEM Metrology Workbench Contributors\n"
             "Source code: BSD-3-Clause · Documentation: CC BY 4.0\n\n"
-            "Citation: cite SEM Metrology Workbench, version 1.0.0, using the repository CITATION.cff/Zenodo DOI. "
+            f"Citation: cite SEM Metrology Workbench, version {APP_VERSION}, using the repository CITATION.cff/Zenodo DOI. "
             "Report the recipe, calibration source, sampling, population N and exclusions.\n\n"
             "Privacy: the desktop app sends no telemetry and never uploads images or results. Aggregate GitHub traffic and release-download counts may be used to measure adoption.\n\n"
             "Research software—not a certified metrology instrument. Operator review and a laboratory uncertainty budget remain required.")
