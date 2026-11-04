@@ -1,0 +1,49 @@
+name: Reproducible bug
+description: Report a software or measurement-workflow defect using shareable data.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Workbench version and SHA-256
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+    validations:
+      required: true
+  - type: dropdown
+    id: recipe
+    attributes:
+      label: Recipe/tool
+      options: [Calibration, Circular outlines, Rectangular array, Irregular particles, Line-space grating, Single contour, Waveguide, Cross-section feature, Layer stack, Line profile, Surface texture, Process study, Export/report]
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and exact error
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Steps, settings and de-identified reproducer
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Data handling
+      options:
+        - label: I removed confidential images, sample identifiers, local paths and instrument metadata.
+          required: true

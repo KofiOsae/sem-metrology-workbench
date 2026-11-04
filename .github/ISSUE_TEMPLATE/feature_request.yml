@@ -1,0 +1,23 @@
+name: Metrology feature request
+description: Propose a physical quantity, model or workflow improvement.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Research/metrology use case
+    validations:
+      required: true
+  - type: textarea
+    id: definition
+    attributes:
+      label: Physical quantity, datum, edge model and units
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Proposed ground truth or validation source
+    validations:
+      required: true

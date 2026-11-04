@@ -1,0 +1,9 @@
+SEM Metrology Workbench 1.0.0 - Windows x64 release
+
+Run "SEM Metrology Workbench.exe" directly. This is a single-file Windows
+application; no _internal folder or Python installation is required.
+
+This release is built with the pinned PySide6/Qt 6.8.3 runtime.
+Verify the SHA-256 published with the GitHub Release. The application sends no
+telemetry and does not upload SEM images or results. Press F1 for tutorials and
+troubleshooting. Source license: BSD-3-Clause.

@@ -1,0 +1,6 @@
+# Pin the Qt runtime used for released Windows builds.  Floating to a newer
+# PySide6 can produce an internally inconsistent frozen Qt/MSVC DLL set.
+PySide6==6.8.3
+numpy==2.5.1
+Pillow==12.3.0
+opencv-python-headless==5.0.0.93

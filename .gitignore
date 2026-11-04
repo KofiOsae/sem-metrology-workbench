@@ -1,0 +1,16 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/
+*.spec.bak
+SEMforintegration*.txt
+app.py
+metrology_app.py
+standalone_launcher.py
+run_metrology_app.bat
+build_standalone.bat
+SEM_Metrology.spec
+requirements.txt

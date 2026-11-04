@@ -1,0 +1,37 @@
+{
+  "license": "BSD-3-Clause",
+  "purpose": "synthetic tutorial/regression data; not physical SEM",
+  "samples": {
+    "01_two_class_hole_array.png": {
+      "nm_per_pixel": 5.0,
+      "objects": 30,
+      "diameters_nm": [
+        180,
+        240
+      ],
+      "period_x_nm": 625,
+      "period_y_nm": 550
+    },
+    "02_vertical_grating.png": {
+      "nm_per_pixel": 5.0,
+      "nominal_cd_nm": 160,
+      "pitch_nm": 475,
+      "orientation": "vertical"
+    },
+    "03_irregular_particles.png": {
+      "nm_per_pixel": 5.0,
+      "objects": 12,
+      "note": "isolated ellipses with known visible boundaries"
+    },
+    "04_cross_section_pillars.png": {
+      "nm_per_pixel": 5.0,
+      "structures": 4,
+      "heights_nm": [
+        1300.0,
+        1375.0,
+        1250.0,
+        1425.0
+      ]
+    }
+  }
+}
