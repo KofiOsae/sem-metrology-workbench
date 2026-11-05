@@ -11,7 +11,8 @@ traceable dimensional analysis of scanning electron microscope images. Version
 
 ## Download and start
 
-For a quick trial, use the hosted browser edition from the project website.
+For a quick trial, use the [hosted browser edition](https://sem-metrology-workbench-app.onrender.com/)
+from the [project website](https://sem-metrology-workbench.onrender.com/).
 It exposes the eight core geometry recipes, calibrated overlays, tables,
 summary statistics, distributions and CSV download without installing Python.
 Images submitted there are processed by the Render service, so the offline
