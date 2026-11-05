@@ -1,6 +1,6 @@
 # Privacy
 
-SEM Metrology Workbench 1.0.0 is offline desktop software.
+SEM Metrology Workbench 1.2.1 is offline desktop software.
 
 - No images, measurements, filenames, instrument metadata or usage events are
   transmitted by the application.
@@ -8,6 +8,11 @@ SEM Metrology Workbench 1.0.0 is offline desktop software.
 - Exported reports remain in locations selected by the operator.
 - Process-study JSON files can contain local paths and sample labels; review
   them before sharing.
+- Traceability JSON files contain the source filename and its SHA-256 identity,
+  but not the source pixels.
+- Privacy-safe support ZIP files omit the original acquisition. Their optional
+  reviewed overlay can still show raster labels or specimen information and
+  must be inspected before sharing.
 
 Project maintainers may use aggregate GitHub repository traffic (14-day views,
 visitors and clones) and aggregate GitHub Release asset download counts. These

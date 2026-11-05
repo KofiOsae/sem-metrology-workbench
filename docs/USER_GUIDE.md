@@ -128,6 +128,13 @@ PDF can include the calibrated overlay, feature table, statistics, plot and QA
 notes. Record the app version, recipe, calibration source, image identity,
 operator decisions and exclusions in publications or regulated records.
 
+Statistical CSV export also creates a JSON traceability sidecar containing the
+source-image SHA-256, original dimensions, calibration, complete recipe state,
+ROI/mask coordinates and QA disposition. **File → Export privacy-safe support
+package** creates a ZIP containing that record, result tables and the reviewed
+overlay without embedding the original SEM acquisition. Inspect the overlay
+for visible raster labels or specimen information before sharing it.
+
 ## 10. Citation
 
 Use the repository citation generated from `CITATION.cff` and cite the exact

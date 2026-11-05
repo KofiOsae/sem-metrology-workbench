@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-11-05
+
+- Adds image-checksummed JSON traceability records beside statistical CSV exports.
+- Adds a privacy-safe diagnostic ZIP with settings, QA, result tables and an optional reviewed overlay, but no original SEM acquisition.
+- Adds UTC timestamp and source-image SHA-256 identity to professional PDF reports.
+- Fixes freehand inclusion-region and rectangular signal-texture region handling.
+- Adds a responsive public quick-start site and structured, privacy-aware GitHub support form.
+
 ## 1.2.0 — 2026-11-05
 
 - Numbered settings, visualization/results and diagnostics workflow columns.

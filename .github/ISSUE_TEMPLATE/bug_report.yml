@@ -1,49 +1,56 @@
-name: Reproducible bug
-description: Report a software or measurement-workflow defect using shareable data.
-title: "[Bug] "
-labels: [bug]
+name: Measurement or application problem
+description: Report a reproducible analysis, interface, export or startup problem.
+title: "[Problem]: "
+labels: ["needs-triage"]
 body:
+  - type: markdown
+    attributes:
+      value: Please remove confidential image or specimen information. The app can create a privacy-safe support package from File → Export privacy-safe support package.
   - type: input
     id: version
     attributes:
-      label: Workbench version and SHA-256
-    validations:
-      required: true
-  - type: input
-    id: windows
-    attributes:
-      label: Windows version
+      label: Workbench version
+      placeholder: "1.2.1"
     validations:
       required: true
   - type: dropdown
-    id: recipe
+    id: area
     attributes:
-      label: Recipe/tool
-      options: [Calibration, Circular outlines, Rectangular array, Irregular particles, Line-space grating, Single contour, Waveguide, Cross-section feature, Layer stack, Line profile, Surface texture, Process study, Export/report]
+      label: Affected area
+      options: [Calibration, Circles or holes, Rectangular array, Irregular particles, Grating, Single feature, Waveguide, Cross-section feature, Layer stack, Line profile, Surface texture, Process study, Export or report, Startup or interface]
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Expected result
+      description: Include the physical quantity and trusted expectation where possible.
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior and exact error
+      label: Actual result and visible overlay problem
     validations:
       required: true
   - type: textarea
-    id: reproducer
+    id: reproduce
     attributes:
-      label: Steps, settings and de-identified reproducer
+      label: Steps to reproduce
+      placeholder: "1. Open…\n2. Select…\n3. Draw…\n4. Run…"
     validations:
       required: true
   - type: checkboxes
-    id: privacy
+    id: review
     attributes:
-      label: Data handling
+      label: Review confirmation
       options:
-        - label: I removed confidential images, sample identifiers, local paths and instrument metadata.
+        - label: I reviewed calibration, recipe, polarity, size limits, ROI/mask and the measurement overlay.
           required: true
+        - label: I removed confidential information from any attachment.
+          required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: QA warning or support-package details
+      description: Attach the reviewed support ZIP by dragging it into this field, if appropriate.

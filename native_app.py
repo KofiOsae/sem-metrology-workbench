@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import json
+import platform
 import sys
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import Qt, Signal, QRectF, QLineF, QSettings
+from PySide6.QtCore import Qt, Signal, QRectF, QLineF, QSettings, qVersion
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPainterPath, QPixmap, QPen, QPdfWriter, QPageSize, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
@@ -33,7 +38,7 @@ from sem_metrology.studies import common_study_metrics, dose_response_summary
 from sem_metrology.waveguide import analyze_waveguide, waveguide_overlay
 
 REFERENCE_TAUGHT_RECIPES = frozenset((0, 1, 2, 4))
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 APP_STYLE = """
 QMainWindow, QWidget { background: #10151c; color: #dce5ee; font-family: 'Segoe UI'; font-size: 10pt; }
@@ -70,6 +75,16 @@ def array_to_pixmap(rgb: np.ndarray) -> QPixmap:
 def bundled_path(relative: str) -> Path:
     root=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
     return root/relative
+
+
+def json_safe(value):
+    """Convert NumPy and other analysis values to portable JSON primitives."""
+    if isinstance(value, dict): return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)): return [json_safe(item) for item in value]
+    if isinstance(value, np.ndarray): return value.tolist()
+    if isinstance(value, np.generic): return value.item()
+    if isinstance(value, float) and not np.isfinite(value): return None
+    return value
 
 
 class DocumentationDialog(QDialog):
@@ -473,12 +488,13 @@ class MetrologyWorkbench(QMainWindow):
         export_action = QAction("Export &report CSV…", self); export_action.setShortcut("Ctrl+E"); export_action.triggered.connect(self.export_report)
         export_plot_action = QAction("Export current &plot PNG…", self); export_plot_action.triggered.connect(self.export_plot)
         export_pdf_action=QAction("Export professional PDF report…",self); export_pdf_action.triggered.connect(self.export_professional_report)
+        support_action=QAction("Export privacy-safe support package…",self); support_action.triggered.connect(self.export_support_package)
         add_study_action=QAction("Add reviewed result to process study…",self); add_study_action.triggered.connect(self.add_current_to_study)
         open_study_action=QAction("Open process study…",self); open_study_action.triggered.connect(self.open_process_study)
         save_recipe_action=QAction("Save measurement recipe…",self); save_recipe_action.triggered.connect(self.save_recipe)
         load_recipe_action=QAction("Load measurement recipe…",self); load_recipe_action.triggered.connect(self.load_recipe)
         exit_action = QAction("E&xit", self); exit_action.setShortcut("Alt+F4"); exit_action.triggered.connect(self.close)
-        file_menu.addActions([open_action, export_action, export_plot_action,export_pdf_action,save_recipe_action,load_recipe_action]); file_menu.addSeparator(); file_menu.addActions([add_study_action,open_study_action]); file_menu.addSeparator(); file_menu.addAction(exit_action)
+        file_menu.addActions([open_action, export_action, export_plot_action,export_pdf_action,support_action,save_recipe_action,load_recipe_action]); file_menu.addSeparator(); file_menu.addActions([add_study_action,open_study_action]); file_menu.addSeparator(); file_menu.addAction(exit_action)
         edit_menu = self.menuBar().addMenu("&Edit")
         reset_action = QAction("&Reset identification", self); reset_action.setShortcut("Ctrl+R"); reset_action.triggered.connect(self.reset_analysis)
         redraw_action = QAction("&Redraw reference feature", self); redraw_action.triggered.connect(self._begin_teach)
@@ -914,7 +930,7 @@ class MetrologyWorkbench(QMainWindow):
         polygon=np.asarray(clipped,dtype=np.int32)
         if self.mask_behavior.currentIndex()==1:
             self.exclusion_polygon=polygon; self.analysis_region_label.setText(f"Exclusion mask · {len(clipped)} points · features touching it rejected")
-        elif recipe == 4:
+        else:
             self.analysis_roi=None; self.analysis_polygon=polygon; self.analysis_region_label.setText(f"Inclusion mask · {len(clipped)} boundary points · complete features only")
 
     def _clear_analysis_region(self):
@@ -1110,7 +1126,7 @@ class MetrologyWorkbench(QMainWindow):
             x,y,w,h=cv2.boundingRect(self.analysis_polygon.reshape((-1,1,2)))
             region_mask=np.zeros((h,w),np.uint8); local=self.analysis_polygon-np.array([x,y]); cv2.fillPoly(region_mask,[local.astype(np.int32)],1)
             region_name="polygon"
-        elif recipe == 6:
+        else:
             x,y,w,h=self.analysis_roi; region_mask=np.ones((h,w),np.uint8); region_name="rectangle"
         crop=to_gray(self.analysis_rgb[y:y+h,x:x+w]).astype(float)
         if crop.size < 100 or min(crop.shape) < 5:
@@ -1576,6 +1592,8 @@ class MetrologyWorkbench(QMainWindow):
         rows = self._practical_stats(measurement_statistics(self.measurements));
         with open(path, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
+        trace_path=Path(path).with_name(Path(path).stem+"_traceability.json")
+        trace_path.write_text(json.dumps(self._traceability_record(),indent=2,ensure_ascii=False),encoding="utf-8")
         if self.cross_section_records:
             detail_path=str(Path(path).with_name(Path(path).stem+"_structures.csv")); detail_rows=self._practical_rows([record["row"] for record in self.cross_section_records]); columns=[]
             for row in detail_rows:
@@ -1583,8 +1601,63 @@ class MetrologyWorkbench(QMainWindow):
                     if key not in columns: columns.append(key)
             with open(detail_path,"w",newline="",encoding="utf-8-sig") as handle:
                 writer=csv.DictWriter(handle,fieldnames=columns,extrasaction="ignore"); writer.writeheader(); writer.writerows(detail_rows)
-            self.statusBar().showMessage(f"Exported statistics and {detail_path}",5000)
-        else: self.statusBar().showMessage(f"Exported {path}", 5000)
+            self.statusBar().showMessage(f"Exported statistics, structures and traceability record",5000)
+        else: self.statusBar().showMessage(f"Exported statistics and traceability record", 5000)
+
+    def _image_sha256(self):
+        if self.image_path is None or not self.image_path.is_file(): return None
+        digest=hashlib.sha256()
+        with self.image_path.open("rb") as handle:
+            for block in iter(lambda:handle.read(1024*1024),b""): digest.update(block)
+        return digest.hexdigest()
+
+    def _traceability_record(self):
+        calibration={"display":self.sampling_label.text(),"confirmed":self.confirm_calibration.isChecked(),"pixel_mode":self.pixel_mode}
+        if self.calibration is not None:
+            calibration.update({"source":self.calibration.source,"microns_per_pixel":self.calibration.microns_per_pixel})
+        record={
+            "schema":"sem-metrology-traceability-1",
+            "software":{"name":"SEM Metrology Workbench","version":APP_VERSION},
+            "analysis_timestamp_utc":datetime.now(timezone.utc).isoformat(),
+            "image":{"name":self.image_path.name if self.image_path else None,"sha256":self._image_sha256(),"original_width_px":int(self.rgb.shape[1]) if self.rgb is not None else None,"original_height_px":int(self.rgb.shape[0]) if self.rgb is not None else None,"footer_start_y_px":int(self.footer_start) if self.footer_start is not None else None},
+            "calibration":calibration,
+            "model":{"recipe":self.recipe.currentText(),"minimum_credible_size":self.min_size.value(),"maximum_credible_size":self.max_size.value(),"detection_sensitivity":self.sensitivity.value(),"line_orientation":self.line_orientation.currentText(),"feature_polarity":self.line_polarity.currentText(),"class_mode":self.class_mode.currentText(),"classes_confirmed":self.confirm_classes.isChecked(),"reject_partial_border_features":self.reject_border.isChecked()},
+            "regions":{"reference_roi_original_px":self.reference_roi,"analysis_roi_original_px":self.analysis_roi,"analysis_polygon_original_px":self.analysis_polygon,"exclusion_polygon_original_px":self.exclusion_polygon},
+            "release":{"status":self.qa_label.text(),"detail":self.qa_detail.text(),"model_warning":self.model_warning_label.text()},
+            "statistics":self._practical_stats(measurement_statistics(self.measurements)) if self.measurements else [],
+            "feature_count":len(self.feature_rows),
+            "privacy_note":"Original SEM pixels are not embedded in this JSON record."
+        }
+        return json_safe(record)
+
+    @staticmethod
+    def _csv_text(rows):
+        if not rows:return ""
+        columns=[]
+        for row in rows:
+            for key in row:
+                if key not in columns:columns.append(key)
+        stream=io.StringIO(); writer=csv.DictWriter(stream,fieldnames=columns,extrasaction="ignore"); writer.writeheader(); writer.writerows(rows); return stream.getvalue()
+
+    def export_support_package(self):
+        if self.image_path is None:
+            QMessageBox.information(self,"Nothing to package","Open an image before creating a support package."); return
+        path,_=QFileDialog.getSaveFileName(self,"Export privacy-safe support package","SEM_metrology_support.zip","ZIP archive (*.zip)")
+        if not path:return
+        payload=self._traceability_record()
+        payload["support_environment"]={"operating_system":platform.platform(),"python_runtime":platform.python_version(),"qt_runtime":qVersion()}
+        try:
+            with zipfile.ZipFile(path,"w",compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("traceability.json",json.dumps(payload,indent=2,ensure_ascii=False))
+                archive.writestr("statistics.csv",self._csv_text(self._practical_stats(measurement_statistics(self.measurements)) if self.measurements else []))
+                archive.writestr("features.csv",self._csv_text(self._practical_rows(self.feature_rows) if self.feature_rows else []))
+                if self.overlay_rgb is not None:
+                    ok,encoded=cv2.imencode(".png",cv2.cvtColor(self.overlay_rgb,cv2.COLOR_RGB2BGR))
+                    if ok:archive.writestr("reviewed_overlay.png",encoded.tobytes())
+                archive.writestr("README.txt","Privacy-safe support package\n\nContains settings, QA, result tables and the reviewed overlay only. The original SEM acquisition is not included. Review the overlay before sharing because raster labels or specimen information may still be visible.\n")
+        except Exception as exc:
+            QMessageBox.critical(self,"Support package failed",str(exc)); return
+        self.statusBar().showMessage(f"Exported privacy-safe support package {path}",6000)
 
     def save_recipe(self):
         path,_=QFileDialog.getSaveFileName(self,"Save measurement recipe","sem_metrology_recipe.json","JSON (*.json)")
@@ -1639,7 +1712,8 @@ class MetrologyWorkbench(QMainWindow):
                         value=row.get(name,""); text_value=(f"{value:.4g}" if isinstance(value,float) else str(value)); painter.drawText(70+c*colw,y,colw-4,36,Qt.TextFlag.TextWordWrap,text_value[:42])
                     y+=55
         header("SEM Metrology Report"); painter.setFont(subheading); painter.drawText(70,170,self.recipe.currentText()); painter.setFont(normal)
-        painter.drawText(70,220,f"Image: {self.image_path.name if self.image_path else 'unsaved image'}"); painter.drawText(70,255,f"Software: SEM Metrology Workbench {APP_VERSION}"); painter.drawText(70,290,f"Calibration: {self.sampling_label.text()}"); painter.drawText(70,325,f"Population: N={len(self.feature_rows)}"); painter.drawText(70,360,f"Release status: {self.qa_label.text()}"); painter.drawText(70,410,"This report preserves operator-selected calibration, model, overlays, statistics and QA state.")
+        report_time=datetime.now(timezone.utc).isoformat(); image_hash=self._image_sha256() or "unavailable"
+        painter.drawText(70,220,f"Image: {self.image_path.name if self.image_path else 'unsaved image'}"); painter.drawText(70,255,f"Software: SEM Metrology Workbench {APP_VERSION}"); painter.drawText(70,290,f"Calibration: {self.sampling_label.text()}"); painter.drawText(70,325,f"Population: N={len(self.feature_rows)}"); painter.drawText(70,360,f"Release status: {self.qa_label.text()}"); painter.drawText(70,395,f"Analysis timestamp (UTC): {report_time}"); painter.setFont(QFont("Segoe UI",7)); painter.drawText(QRectF(70,425,1060,55),Qt.TextFlag.TextWordWrap,f"Source image SHA-256: {image_hash}"); painter.setFont(normal); painter.drawText(70,510,"This report preserves operator-selected calibration, model, overlays, statistics and QA state.")
         if options["overlay"].isChecked() and self.overlay_rgb is not None:
             new_page("Measurement overlay"); pix=array_to_pixmap(self.overlay_rgb); target=QRectF(70,150,1060,1150); scaled=pix.scaled(int(target.width()),int(target.height()),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation); painter.drawPixmap(70,150,scaled); painter.drawText(70,1360,"Overlay colours and gauge definitions are documented in Help → Measurement definitions.")
         if options["measurements"].isChecked(): table_page("Individual measurements",self._practical_rows(self.feature_rows))

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Operator-guided dimensional metrology for SEM images: calibrated dimensions, distributions, QA and reproducible reports.">
+  <title>SEM Metrology Workbench</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top">SEM Metrology Workbench</a>
+    <nav aria-label="Primary navigation">
+      <a href="#workflow">Workflow</a><a href="#models">Models</a><a href="#examples">Examples</a><a href="#privacy">Privacy</a><a href="#support">Support</a>
+    </nav>
+    <a class="button small" href="https://github.com/KofiOsae/sem-metrology-workbench/releases/latest">Download</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Research SEM image metrology</p>
+        <h1>Measure structures, review evidence, report statistics.</h1>
+        <p class="lead">A standalone Windows workbench for calibrated, operator-reviewed dimensional measurements from top-view and cross-section SEM images.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/KofiOsae/sem-metrology-workbench/releases/latest">Download Windows release</a>
+          <a class="button secondary" href="https://github.com/KofiOsae/sem-metrology-workbench">View source and manuals</a>
+        </div>
+        <p class="note">No Python installation required. Verify the supplied SHA-256 checksum before use.</p>
+      </div>
+      <div class="workflow-card" aria-label="Three-stage workbench workflow">
+        <div><b>1</b><span>Choose calibration, model and region</span></div>
+        <div><b>2</b><span>Inspect overlays, tables and distributions</span></div>
+        <div><b>3</b><span>Resolve diagnostics before release</span></div>
+      </div>
+    </section>
+
+    <section id="workflow" class="section">
+      <p class="eyebrow">Fast start</p><h2>A reviewable measurement workflow</h2>
+      <div class="steps">
+        <article><span>01</span><h3>Open and calibrate</h3><p>Load the original acquisition. Confirm companion metadata or the physical scale-bar endpoints and value.</p></article>
+        <article><span>02</span><h3>Select the physical model</h3><p>Choose the recipe that matches the fabricated geometry. Optionally teach one complete reference feature.</p></article>
+        <article><span>03</span><h3>Review the overlay</h3><p>Check every detected contour, datum, interface and rejection—not only the reported count.</p></article>
+        <article><span>04</span><h3>Release evidence</h3><p>Inspect statistics, distributions and QA, then export PDF, CSV, PNG or a traceability record.</p></article>
+      </div>
+    </section>
+
+    <section id="models" class="section tinted">
+      <p class="eyebrow">Released models</p><h2>Structure-aware outputs</h2>
+      <div class="grid">
+        <article><h3>Circles, rings and holes</h3><p>Diameter, lattice periods, edge roughness and multiple size populations.</p></article>
+        <article><h3>Rectangular arrays</h3><p>Length, width, X/Y periods and edge roughness.</p></article>
+        <article><h3>Irregular particles</h3><p>Isolated/contact-aware Feret, equivalent diameter, area and shape statistics.</p></article>
+        <article><h3>Line-space gratings</h3><p>Critical dimension, pitch, duty cycle, LER and LWR.</p></article>
+        <article><h3>Cross-sections and films</h3><p>Feature height, CDs, sidewall angle and reviewed layer-stack thicknesses.</p></article>
+        <article><h3>Single features and waveguides</h3><p>Contour descriptors, path length, local normal width and taper.</p></article>
+        <article><h3>Line profiles and signal texture</h3><p>Calibrated lateral chords, gaps, spacing and clearly labelled SEM-signal Ra/Sa descriptors.</p></article>
+        <article><h3>Process studies</h3><p>Compare reviewed image-level measurements against dose, focus, time or another trusted factor.</p></article>
+      </div>
+      <p class="note">Research software—not a certified metrology instrument. A laboratory uncertainty budget and operator review remain necessary.</p>
+    </section>
+
+    <section id="examples" class="section">
+      <p class="eyebrow">Learn by trial</p><h2>Open validation examples</h2>
+      <p class="intro">The repository includes redistributable synthetic images with disclosed ground truth for mixed-size holes, gratings, particles and cross-section pillars.</p>
+      <div class="actions">
+        <a class="button secondary" href="https://github.com/KofiOsae/sem-metrology-workbench/tree/main/examples">Open example projects</a>
+        <a class="button secondary" href="https://github.com/KofiOsae/sem-metrology-workbench/blob/main/docs/TUTORIALS.md">Read guided tutorials</a>
+        <a class="button secondary" href="https://github.com/KofiOsae/sem-metrology-workbench/blob/main/docs/CAPABILITY_MATRIX.md">Check model limits</a>
+      </div>
+    </section>
+
+    <section id="privacy" class="section split">
+      <div><p class="eyebrow">Local by design</p><h2>Your SEM images stay on your computer.</h2></div>
+      <div><p>The desktop application sends no telemetry and uploads no images or results. Usage is assessed only through aggregate repository traffic and release-download counts.</p><p>A privacy-safe support package can include settings, QA, tables and a reviewed overlay without embedding the original SEM acquisition.</p></div>
+    </section>
+
+    <section id="support" class="section tinted">
+      <p class="eyebrow">Troubleshooting and reproducibility</p><h2>Share evidence, not guesswork.</h2>
+      <div class="grid three">
+        <article><h3>Traceability</h3><p>Exports record the software version, image checksum, calibration, recipe, regions and QA disposition.</p></article>
+        <article><h3>Troubleshooting</h3><p>Use the complete in-app guide and the repository troubleshooting checklist before reporting a problem.</p></article>
+        <article><h3>Report an issue</h3><p>Attach the generated support ZIP only after reviewing its overlay for visible specimen or raster labels.</p></article>
+      </div>
+      <div class="actions"><a class="button" href="https://github.com/KofiOsae/sem-metrology-workbench/issues/new/choose">Open a support request</a></div>
+    </section>
+  </main>
+
+  <footer><span>SEM Metrology Workbench</span><span><a href="https://github.com/KofiOsae/sem-metrology-workbench/blob/main/PRIVACY.md">Privacy</a> · <a href="https://github.com/KofiOsae/sem-metrology-workbench/blob/main/LICENSE">Licence</a> · <a href="https://github.com/KofiOsae/sem-metrology-workbench/releases">Releases</a></span></footer>
+</body>
+</html>
