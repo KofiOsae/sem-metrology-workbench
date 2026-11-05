@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 — 2026-11-05
+
+- Numbered settings, visualization/results and diagnostics workflow columns.
+- Direct settings/diagnostics width sliders plus one-click width reset.
+- Separate collapsible release, model-compatibility and operator-guidance panels.
+- Retains the compact selectable centre result view and saved splitter layout.
+
 ## 1.1.0 — 2026-11-05
 
 - Laptop-first three-column workspace with settings, visualization/results and diagnostics.

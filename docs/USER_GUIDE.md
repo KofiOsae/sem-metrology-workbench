@@ -1,4 +1,4 @@
-# User guide — Version 1.1.0
+# User guide — Version 1.2.0
 
 ## Workspace layout
 
@@ -8,7 +8,9 @@ is not needed. The **centre** keeps the calibrated image and overlay above a
 dropdown-selectable measurements, statistics, distribution or QA view.
 **Diagnostics** on the right contains the run control, release state and model
 warnings. Drag either vertical divider or the image/results divider to suit the
-screen; the workbench remembers these proportions between sessions.
+screen; the workbench remembers these proportions between sessions. The
+toolbar sliders change the settings and diagnostics widths directly, while
+**Reset widths** restores a balanced laptop layout.
 
 ## 1. Before measuring
 

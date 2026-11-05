@@ -2,7 +2,7 @@
 
 SEM Metrology Workbench is an operator-guided Windows desktop application for
 traceable dimensional analysis of scanning electron microscope images. Version
-1.1.0 is a standalone native Qt application; recipients do not need Python.
+1.2.0 is a standalone native Qt application; recipients do not need Python.
 
 > **Measurement status:** this is research software, not a certified metrology
 > instrument. Calibration, model compatibility, overlays and QA warnings must
@@ -11,7 +11,7 @@ traceable dimensional analysis of scanning electron microscope images. Version
 
 ## Download and start
 
-1. Download `SEM-Metrology-Workbench-v1.1.0-Windows-x64.exe` from the GitHub
+1. Download `SEM-Metrology-Workbench-v1.2.0-Windows-x64.exe` from the GitHub
    Releases page.
 2. Verify the published SHA-256 checksum.
 3. Run the executable. Windows SmartScreen may show an unrecognized-publisher
