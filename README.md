@@ -11,6 +11,13 @@ traceable dimensional analysis of scanning electron microscope images. Version
 
 ## Download and start
 
+For a quick trial, use the hosted browser edition from the project website.
+It exposes the eight core geometry recipes, calibrated overlays, tables,
+summary statistics, distributions and CSV download without installing Python.
+Images submitted there are processed by the Render service, so the offline
+Windows edition remains the appropriate choice for confidential acquisitions
+and provides the complete review, reporting and process-study workflow.
+
 1. Download `SEM-Metrology-Workbench-v1.2.1-Windows-x64.exe` from the GitHub
    Releases page.
 2. Verify the published SHA-256 checksum.
@@ -66,8 +73,10 @@ The desktop application sends no telemetry and does not upload images or
 results. Adoption is measured only from aggregate GitHub traffic and release
 asset download counts. See [Privacy](PRIVACY.md).
 
-The public quick-start site is maintained in [`site/`](site/) for deployment
-as a static site. It never receives or processes SEM images.
+The public quick-start site is maintained in [`site/`](site/). The optional
+browser workbench is implemented by [`web_app.py`](web_app.py) and [`web/`](web/).
+It processes each request without application-level persistence, but the image
+is necessarily transmitted to the hosted service. See [Privacy](PRIVACY.md).
 
 ## Citation
 

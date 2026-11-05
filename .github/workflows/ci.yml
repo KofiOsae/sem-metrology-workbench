@@ -16,3 +16,31 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: python examples/generate_validation_samples.py
       - run: python examples/validate_generated_samples.py
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-web.txt
+      - run: python -m pip install -r requirements-web.txt
+      - run: python examples/generate_validation_samples.py
+      - run: python -m py_compile web_app.py
+      - name: Exercise browser service
+        run: |
+          uvicorn web_app:app --host 127.0.0.1 --port 8765 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:8765/health && break
+            sleep 1
+          done
+          curl --fail --silent --output /tmp/result.json \
+            -F image=@examples/generated/02_vertical_grating.png \
+            -F recipe=grating -F nm_per_px=5 -F min_size_nm=40 \
+            -F max_size_nm=600 -F sensitivity=0.82 -F polarity=bright \
+            -F orientation=vertical -F reject_border=true \
+            http://127.0.0.1:8765/api/analyze
+          python -c "import json; d=json.load(open('/tmp/result.json')); assert d['feature_count'] > 0; assert d['statistics']"
