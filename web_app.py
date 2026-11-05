@@ -12,12 +12,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from sem_metrology.calibration import detect_footer
+from sem_metrology.calibration import detect_footer, detect_scale_bar
 from sem_metrology.io import to_gray
 from sem_metrology.lines import analyze_line_space
-from sem_metrology.measurements import measure_cross_section, measure_layer_stack
+from sem_metrology.measurements import Measurement, measure_cross_section, measure_layer_stack
 from sem_metrology.overlay import circle_overlay, cross_section_overlay, line_space_overlay, rectangular_overlay, shape_overlay
 from sem_metrology.reporting import measurement_statistics
+from sem_metrology.populations import infer_feature_classes
 from sem_metrology.shapes import analyze_circular_outlines, analyze_rectangular_features, analyze_shapes
 from sem_metrology.waveguide import analyze_waveguide, waveguide_overlay
 
@@ -71,6 +72,43 @@ def _overlay_data(rgb):
     return "data:image/png;base64,"+base64.b64encode(encoded.tobytes()).decode("ascii")
 
 
+def _scale_overlay(rgb, detection, nm_per_px=None, source=""):
+    canvas=np.asarray(rgb,dtype=np.uint8).copy()
+    if detection:
+        a=tuple(int(v) for v in detection["start_xy"]); b=tuple(int(v) for v in detection["end_xy"])
+        cv2.line(canvas,a,b,(255,0,255),max(3,round(canvas.shape[1]/450)),cv2.LINE_AA)
+        label=f"SCALE DATUM {detection['pixel_length']:.1f} px"
+        cv2.putText(canvas,label,(max(4,min(a[0],b[0])),max(18,min(a[1],b[1])-8)),cv2.FONT_HERSHEY_SIMPLEX,.48,(255,255,255),2,cv2.LINE_AA)
+    if nm_per_px:
+        text=f"CALIBRATION {nm_per_px:.6g} nm/px"+(f" · {source}" if source else "")
+        cv2.putText(canvas,text,(8,22),cv2.FONT_HERSHEY_SIMPLEX,.52,(255,0,255),2,cv2.LINE_AA)
+    return canvas
+
+
+def _apply_population_classes(rows, recipe, mode):
+    keys={"circles":"Diameter (µm)","rectangles":"Mean width (µm)","particles":"Feret max (µm)","grating":"Mean CD (µm)"}
+    key=keys.get(recipe)
+    if mode=="one" or not key or len(rows)<8 or not all(key in row and np.isfinite(row[key]) for row in rows):return None
+    requested={"two":2,"three":3}.get(mode)
+    model=infer_feature_classes(np.asarray([[row[key]] for row in rows],float),requested_classes=requested)
+    if model.get("labels") is None:return None
+    for row,label in zip(rows,model["labels"]):
+        row["Size class"]=f"Class {'ABC'[int(label)]}"; row["Class confidence (%)"]=model["confidence"]*100
+    return {"count":int(model["class_count"]),"confidence":float(model["confidence"]),"counts":model["counts"].tolist()}
+
+
+def _recommend_model(rgb):
+    gray=to_gray(rgb)
+    if max(gray.shape)>1200:
+        factor=1200/max(gray.shape); gray=cv2.resize(gray,None,fx=factor,fy=factor,interpolation=cv2.INTER_AREA)
+    work=cv2.GaussianBlur(gray,(3,3),0); ex=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,1,0,ksize=3)))); ey=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,0,1,ksize=3))))
+    orientation="vertical" if ex>=ey else "horizontal"; confidence=max(ex,ey)/(ex+ey+1e-9)
+    if confidence>=.72:
+        candidates=[analyze_line_space(gray,1.0,p,2.0,max(gray.shape)/2,orientation)[0] for p in ("bright","dark")]
+        if max(map(len,candidates))>=4:return {"recipe":"grating","orientation":orientation,"confidence":confidence}
+    return None
+
+
 @app.get("/")
 def index(): return FileResponse(WEB / "index.html")
 
@@ -91,8 +129,12 @@ async def preview(image: UploadFile = File(...)):
         raise HTTPException(400, f"Cannot read image: {exc}")
     if rgb.shape[0] * rgb.shape[1] > MAX_PIXELS:
         raise HTTPException(413, "Image exceeds the 25 megapixel browser limit")
-    return JSONResponse({"width": int(rgb.shape[1]), "height": int(rgb.shape[0]),
-                         "preview": _overlay_data(rgb)})
+    footer=detect_footer(rgb); detection=detect_scale_bar(rgb,footer)
+    analysis=rgb[:footer] if footer<rgb.shape[0] else rgb
+    return JSONResponse(_safe({"width": int(rgb.shape[1]), "height": int(rgb.shape[0]),
+                         "footer_start":footer,"scale_detection":detection,
+                         "recommendation":_recommend_model(analysis),
+                         "preview": _overlay_data(_scale_overlay(rgb,detection))}))
 
 
 @app.post("/api/analyze")
@@ -100,7 +142,9 @@ async def analyze(
     image: UploadFile = File(...), recipe: str = Form(...), nm_per_px: float = Form(...),
     min_size_nm: float = Form(10), max_size_nm: float = Form(10000), sensitivity: float = Form(.82),
     polarity: str = Form("bright"), orientation: str = Form("vertical"), reject_border: bool = Form(True),
-    reference_roi: str = Form(""), analysis_roi: str = Form("")
+    reference_roi: str = Form(""), analysis_roi: str = Form(""), scale_line: str = Form(""),
+    calibration_source: str = Form("direct"), period_x_nm: float = Form(0), period_y_nm: float = Form(0),
+    layer_period_count: int = Form(0), class_mode: str = Form("auto"), classes_confirmed: bool = Form(False)
 ):
     raw=await image.read(MAX_UPLOAD+1)
     if len(raw)>MAX_UPLOAD:raise HTTPException(413,"Image exceeds the 20 MB browser limit")
@@ -109,8 +153,17 @@ async def analyze(
     if rgb.shape[0]*rgb.shape[1]>MAX_PIXELS:raise HTTPException(413,"Image exceeds the 25 megapixel browser limit")
     if not np.isfinite(nm_per_px) or nm_per_px<=0:raise HTTPException(400,"Enter a positive calibrated nm/pixel value")
     footer=detect_footer(rgb); analysis=rgb[:footer].copy() if footer<rgb.shape[0] else rgb.copy(); gray=to_gray(analysis); scale=nm_per_px/1000.0
+    detection=detect_scale_bar(rgb,footer)
+    if scale_line:
+        try:
+            points=json.loads(scale_line); a,b=points
+            length=float(np.hypot(float(b[0])-float(a[0]),float(b[1])-float(a[1])))
+            detection={"start_xy":a,"end_xy":b,"pixel_length":length,"confidence":1.0,"style":"operator_drawn"}
+        except Exception as exc:raise HTTPException(400,f"Invalid scale line: {exc}")
     ref=_roi(reference_roi,gray.shape[1],gray.shape[0]); roi=_roi(analysis_roi,gray.shape[1],gray.shape[0])
     rows=[]; measurements=[]; overlay=analysis.copy(); warnings=[]
+    recommendation=_recommend_model(analysis)
+    if recommendation and recipe!=recommendation["recipe"]:warnings.append(f"Model compatibility: image has a high-confidence {recommendation['orientation']} line-space signature ({recommendation['confidence']:.0%}), but {recipe} was selected.")
     min_um=min_size_nm/1000; max_um=max_size_nm/1000
     if recipe=="circles":
         rows,_,geometry=analyze_circular_outlines(gray,scale,min_um,max_um,sensitivity,reject_border,ref)
@@ -124,11 +177,20 @@ async def analyze(
         if ref:
             rx,ry,rw,rh=ref; nominal=float(np.sqrt(rw*rh)); template=gray[ry:ry+rh,rx:rx+rw]
         min_area=max(8,int(np.pi*(min_um/scale/2)**2)); max_area=max(min_area+1,int(np.pi*(max_um/scale/2)**2))
-        rows,_,contours=analyze_shapes(crop,scale,polarity,min_area,max_area,reject_border,nominal,sensitivity,template)
+        if polarity=="auto":
+            candidates=[analyze_shapes(crop,scale,p,min_area,max_area,reject_border,nominal,sensitivity,template) for p in ("bright","dark")]
+            rows,_,contours=max(candidates,key=lambda result:len(result[0]))
+        else:rows,_,contours=analyze_shapes(crop,scale,polarity,min_area,max_area,reject_border,nominal,sensitivity,template)
         local=np.asarray(shape_overlay(analysis[y:y+h,x:x+w],contours,rows)); overlay[y:y+h,x:x+w]=local
         if any(bool(row.get("Contact split")) for row in rows):warnings.append("Touching particles are visible-segment estimates; hidden boundaries are not reconstructed.")
     elif recipe=="grating":
-        rows,_,bands=analyze_line_space(gray,scale,polarity,min_um,max_um,orientation); overlay=np.asarray(line_space_overlay(analysis,bands,orientation))
+        if orientation=="auto":
+            work=cv2.GaussianBlur(gray,(3,3),0); ex=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,1,0,ksize=3)))); ey=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,0,1,ksize=3)))); orientation="vertical" if ex>=ey else "horizontal"
+        if polarity=="auto":
+            candidates=[analyze_line_space(gray,scale,p,min_um,max_um,orientation) for p in ("bright","dark")]
+            rows,_,bands=max(candidates,key=lambda result:len(result[0]))
+        else:rows,_,bands=analyze_line_space(gray,scale,polarity,min_um,max_um,orientation)
+        overlay=np.asarray(line_space_overlay(analysis,bands,orientation))
     elif recipe in ("waveguide","cross_section","layer_stack"):
         if roi is None:raise HTTPException(400,"Draw an analysis ROI around the intended structure")
         x,y,w,h=roi; crop=gray[y:y+h,x:x+w]; crop_rgb=analysis[y:y+h,x:x+w]
@@ -137,8 +199,22 @@ async def analyze(
         elif recipe=="cross_section":
             measurements,diagnostics=measure_cross_section(crop,scale); overlay[y:y+h,x:x+w]=np.asarray(cross_section_overlay(crop_rgb,diagnostics))
         else:
-            measurements,diagnostics=measure_layer_stack(crop,scale); overlay[y:y+h,x:x+w]=np.asarray(cross_section_overlay(crop_rgb,diagnostics)); warnings.append("Layer interfaces are automatic candidates and require operator review in the desktop edition.")
+            measurements,diagnostics=measure_layer_stack(crop,scale); diagnostics["unit_scale"]=scale*1000; diagnostics["unit"]="nm"
+            if layer_period_count>0:
+                period_px=w/layer_period_count; diagnostics["period_px"]=period_px; diagnostics["unit_scale"]=scale*1000; diagnostics["unit"]="nm"
+                measurements.append(Measurement("Operator-guided lateral period",period_px*scale,"µm",f"ROI width divided by {layer_period_count} declared periods",1.0))
+            overlay[y:y+h,x:x+w]=np.asarray(cross_section_overlay(crop_rgb,diagnostics)); warnings.append("Layer interfaces are automatic candidates and require operator review in the desktop edition.")
     else:raise HTTPException(400,"Unknown recipe")
+    for axis,hint in (("X",period_x_nm),("Y",period_y_nm)):
+        if hint>0:
+            keys=(f"Fundamental period {axis} (µm)",f"Period {axis} (µm)")
+            for row in rows:
+                for key in keys:
+                    if key in row:row[key]=hint/1000
+                row[f"Period {axis} confidence (%)"]=100.0
+    class_model=_apply_population_classes(rows,recipe,class_mode)
+    if class_model and not classes_confirmed:warnings.append(f"{class_model['count']} size classes proposed ({class_model['confidence']:.0%} confidence); operator confirmation required.")
     stats=measurement_statistics(measurements) if measurements else _numeric_stats(rows)
     if not rows and not measurements:warnings.append("No credible structures were found. Review calibration, polarity, size limits, ROI and recipe.")
-    return JSONResponse(_safe({"version":APP_VERSION,"recipe":recipe,"feature_count":len(rows) if rows else (1 if measurements else 0),"rows":rows,"statistics":stats,"warnings":warnings,"overlay":_overlay_data(overlay),"privacy":"Image processed in memory and not intentionally retained by the application."}))
+    display=rgb.copy(); display[:overlay.shape[0],:overlay.shape[1]]=overlay; display=_scale_overlay(display,detection,nm_per_px,calibration_source)
+    return JSONResponse(_safe({"version":APP_VERSION,"recipe":recipe,"feature_count":len(rows) if rows else (1 if measurements else 0),"rows":rows,"statistics":stats,"warnings":warnings,"class_model":class_model,"overlay":_overlay_data(display),"privacy":"Image processed in memory and not intentionally retained by the application."}))
