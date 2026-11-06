@@ -71,20 +71,24 @@ specific SEM, specimen, acquisition condition or laboratory.
 ## Privacy and usage statistics
 
 The desktop application sends no telemetry and does not upload images or
-results. Adoption is measured only from aggregate GitHub traffic and release
-asset download counts. See [Privacy](PRIVACY.md).
+results. The hosted browser edition counts completed analyses and distinct
+anonymous browser installations using a hashed random local identifier; failed
+and cancelled work is excluded. Public totals are available from the workbench's
+**Help · Cite & usage** command and `/api/usage`. See [Privacy](PRIVACY.md).
 
 The public quick-start site is maintained in [`site/`](site/). The optional
 browser workbench is implemented by [`web_app.py`](web_app.py) and [`web/`](web/).
-It processes each request without application-level persistence, but the image
-is necessarily transmitted to the hosted service. See [Privacy](PRIVACY.md).
+It processes each image without intentionally retaining pixels, filenames or
+results, but the image is necessarily transmitted to the hosted service. Only
+the privacy-safe completion event described above is persistent. See
+[Privacy](PRIVACY.md).
 
 ## Citation
 
 Use GitHub's **Cite this repository** button, which reads `CITATION.cff`. Add
-the final public repository URL when the destination is known. After the first
-public release is archived in Zenodo, add its DOI. Always include the version
-used in the methods section.
+the software version used in the methods section. The browser workbench also
+provides a copy-ready citation under **Help · Cite & usage**. After a public
+release is archived in Zenodo, its DOI can be added to `CITATION.cff`.
 
 ## License and copyright
 

@@ -4,3 +4,4 @@ python-multipart>=0.0.9,<1
 numpy>=1.26,<3
 Pillow>=11,<13
 opencv-python-headless==4.11.0.86
+psycopg[binary]>=3.2,<4

@@ -44,3 +44,25 @@ jobs:
             -F orientation=vertical -F reject_border=true \
             http://127.0.0.1:8765/api/analyze
           python -c "import json; d=json.load(open('/tmp/result.json')); assert d['feature_count'] > 0; assert d['statistics']"
+          curl --fail --silent --output /tmp/job.json \
+            -F image=@examples/generated/02_vertical_grating.png \
+            -F recipe=grating -F nm_per_px=5 -F min_size_nm=40 \
+            -F max_size_nm=600 -F client_id=ci-anonymous-installation \
+            http://127.0.0.1:8765/api/jobs
+          job_id=$(python -c "import json; print(json.load(open('/tmp/job.json'))['job_id'])")
+          for attempt in {1..120}; do
+            curl --fail --silent --output /tmp/job-status.json "http://127.0.0.1:8765/api/jobs/$job_id"
+            state=$(python -c "import json; print(json.load(open('/tmp/job-status.json'))['status'])")
+            [ "$state" = complete ] && break
+            [ "$state" = failed ] && cat /tmp/job-status.json && exit 1
+            sleep 1
+          done
+          python -c "import json; d=json.load(open('/tmp/job-status.json')); assert d['status']=='complete'; assert d['result']['feature_count'] > 0"
+          curl --fail --silent --output /tmp/cancel-job.json \
+            -F image=@examples/generated/03_irregular_particles.png \
+            -F recipe=particles -F nm_per_px=5 -F min_size_nm=20 \
+            -F max_size_nm=1000 -F client_id=ci-cancelled \
+            http://127.0.0.1:8765/api/jobs
+          cancel_id=$(python -c "import json; print(json.load(open('/tmp/cancel-job.json'))['job_id'])")
+          curl --fail --silent -X DELETE "http://127.0.0.1:8765/api/jobs/$cancel_id" | python -c "import sys,json; assert json.load(sys.stdin)['status']=='cancelled'"
+          curl --fail --silent http://127.0.0.1:8765/api/usage | python -c "import sys,json; d=json.load(sys.stdin); assert 'persistent' in d"

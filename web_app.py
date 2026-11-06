@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import base64
+import asyncio
+import hashlib
 import io
 import json
+import multiprocessing as mp
+import os
 from pathlib import Path
+import tempfile
+import threading
+import time
+import uuid
 
 import cv2
 import numpy as np
@@ -27,9 +35,86 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 25_000_000
+MAX_ACTIVE_JOBS = 2
+JOB_TTL_SECONDS = 60 * 60
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
+USAGE_READY = False
+USAGE_LOCK = threading.Lock()
 
 app = FastAPI(title="SEM Metrology Workbench", version=APP_VERSION)
 app.mount("/assets", StaticFiles(directory=WEB), name="assets")
+
+
+def _usage_connection():
+    url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        return None
+    try:
+        import psycopg
+        return psycopg.connect(url, connect_timeout=8)
+    except Exception:
+        return None
+
+
+def _ensure_usage_schema(conn):
+    global USAGE_READY
+    if USAGE_READY:
+        return
+    with USAGE_LOCK:
+        if USAGE_READY:
+            return
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS usage_events (
+                event_id uuid PRIMARY KEY,
+                user_hash char(64) NOT NULL,
+                recipe text NOT NULL,
+                app_version text NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
+            )""")
+        conn.commit()
+        USAGE_READY = True
+
+
+def _record_usage(client_id: str, recipe: str):
+    if not client_id or len(client_id) > 200:
+        return False
+    conn = _usage_connection()
+    if conn is None:
+        return False
+    try:
+        _ensure_usage_schema(conn)
+        salt = os.getenv("USAGE_HASH_SALT", "sem-metrology-workbench")
+        user_hash = hashlib.sha256(f"{salt}:{client_id}".encode()).hexdigest()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO usage_events(event_id,user_hash,recipe,app_version) VALUES (%s,%s,%s,%s)",
+                        (str(uuid.uuid4()), user_hash, recipe[:80], APP_VERSION))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def _usage_summary():
+    conn = _usage_connection()
+    if conn is None:
+        return {"persistent": False, "completed_analyses": None, "unique_users": None,
+                "message": "Persistent usage counter is not configured."}
+    try:
+        _ensure_usage_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute("""SELECT count(*), count(DISTINCT user_hash), min(created_at), max(created_at)
+                           FROM usage_events""")
+            total, users, first, last = cur.fetchone()
+        return {"persistent": True, "completed_analyses": int(total), "unique_users": int(users),
+                "first_use": first.isoformat() if first else None, "last_use": last.isoformat() if last else None}
+    except Exception:
+        return {"persistent": False, "completed_analyses": None, "unique_users": None,
+                "message": "Usage counter is temporarily unavailable."}
+    finally:
+        conn.close()
 
 
 def _safe(value):
@@ -218,3 +303,120 @@ async def analyze(
     if not rows and not measurements:warnings.append("No credible structures were found. Review calibration, polarity, size limits, ROI and recipe.")
     display=rgb.copy(); display[:overlay.shape[0],:overlay.shape[1]]=overlay; display=_scale_overlay(display,detection,nm_per_px,calibration_source)
     return JSONResponse(_safe({"version":APP_VERSION,"recipe":recipe,"feature_count":len(rows) if rows else (1 if measurements else 0),"rows":rows,"statistics":stats,"warnings":warnings,"class_model":class_model,"overlay":_overlay_data(display),"privacy":"Image processed in memory and not intentionally retained by the application."}))
+
+
+def _analysis_worker(raw: bytes, params: dict, output_path: str):
+    """Run one analysis in its own OS process so cancellation stops CPU work."""
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+    path = Path(output_path)
+    temporary = path.with_suffix(".tmp")
+    try:
+        upload = StarletteUploadFile(file=io.BytesIO(raw), filename="browser-upload")
+        response = asyncio.run(analyze(image=upload, **params))
+        payload = {"ok": True, "result": json.loads(response.body)}
+    except Exception as exc:
+        payload = {"ok": False, "error": str(getattr(exc, "detail", exc))}
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _cleanup_jobs():
+    now = time.time()
+    with JOBS_LOCK:
+        expired = [key for key, job in JOBS.items() if now - job["created"] > JOB_TTL_SECONDS]
+        for key in expired:
+            job = JOBS.pop(key)
+            process = job["process"]
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=1)
+            Path(job["output"]).unlink(missing_ok=True)
+
+
+@app.post("/api/jobs")
+async def create_analysis_job(
+    image: UploadFile = File(...), recipe: str = Form(...), nm_per_px: float = Form(...),
+    min_size_nm: float = Form(10), max_size_nm: float = Form(10000), sensitivity: float = Form(.82),
+    polarity: str = Form("bright"), orientation: str = Form("vertical"), reject_border: bool = Form(True),
+    reference_roi: str = Form(""), analysis_roi: str = Form(""), scale_line: str = Form(""),
+    calibration_source: str = Form("direct"), period_x_nm: float = Form(0), period_y_nm: float = Form(0),
+    layer_period_count: int = Form(0), class_mode: str = Form("auto"), classes_confirmed: bool = Form(False),
+    client_id: str = Form("")
+):
+    _cleanup_jobs()
+    raw = await image.read(MAX_UPLOAD + 1)
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(413, "Image exceeds the 20 MB browser limit")
+    with JOBS_LOCK:
+        active = sum(1 for job in JOBS.values() if job["process"].is_alive())
+        if active >= MAX_ACTIVE_JOBS:
+            raise HTTPException(429, "The analysis service is busy. Try again shortly.")
+        job_id = uuid.uuid4().hex
+        output = str(Path(tempfile.gettempdir()) / f"sem-metrology-{job_id}.json")
+        params = dict(recipe=recipe, nm_per_px=nm_per_px, min_size_nm=min_size_nm, max_size_nm=max_size_nm,
+                      sensitivity=sensitivity, polarity=polarity, orientation=orientation,
+                      reject_border=reject_border, reference_roi=reference_roi, analysis_roi=analysis_roi,
+                      scale_line=scale_line, calibration_source=calibration_source, period_x_nm=period_x_nm,
+                      period_y_nm=period_y_nm, layer_period_count=layer_period_count,
+                      class_mode=class_mode, classes_confirmed=classes_confirmed)
+        process = mp.get_context("spawn").Process(target=_analysis_worker, args=(raw, params, output), daemon=False)
+        process.start()
+        JOBS[job_id] = {"process": process, "output": output, "created": time.time(), "recipe": recipe,
+                        "client_id": client_id, "counted": False, "cancelled": False}
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/jobs/{job_id}")
+def analysis_job_status(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Analysis job not found or expired")
+        process = job["process"]
+        if process.is_alive():
+            return {"job_id": job_id, "status": "running"}
+        process.join(timeout=.1)
+        output = Path(job["output"])
+        if job["cancelled"]:
+            return {"job_id": job_id, "status": "cancelled"}
+        if not output.exists():
+            return {"job_id": job_id, "status": "failed", "error": "Analysis worker stopped unexpectedly"}
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        if not payload.get("ok"):
+            return {"job_id": job_id, "status": "failed", "error": payload.get("error", "Analysis failed")}
+        should_count = not job["counted"]
+        if should_count:
+            job["counted"] = True
+    if should_count:
+        _record_usage(job["client_id"], job["recipe"])
+    return {"job_id": job_id, "status": "complete", "result": payload["result"]}
+
+
+@app.delete("/api/jobs/{job_id}")
+def cancel_analysis_job(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Analysis job not found or expired")
+        process = job["process"]
+        job["cancelled"] = True
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+            if process.is_alive() and hasattr(process, "kill"):
+                process.kill()
+                process.join(timeout=1)
+        Path(job["output"]).unlink(missing_ok=True)
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/api/usage")
+def usage_summary():
+    return _usage_summary()
+
+
+@app.get("/api/citation")
+def citation():
+    return {"version": "1.2.1", "preferred": "KofiOsae (2026). SEM Metrology Workbench (Version 1.2.1) [Computer software]. https://github.com/KofiOsae/sem-metrology-workbench",
+            "cff": "https://github.com/KofiOsae/sem-metrology-workbench/blob/main/CITATION.cff",
+            "license": "BSD-3-Clause", "copyright": "Copyright © 2026 KofiOsae"}
