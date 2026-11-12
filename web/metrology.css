@@ -3,3 +3,4 @@
 .viewerbar{display:flex;justify-content:space-between;gap:12px;padding:4px 8px;background:#09111a;color:var(--muted);font-size:11px}
 .legend{margin:4px 0}.legend p{font-size:12px;color:var(--muted)}
 .gauge-row{display:flex;justify-content:space-between;gap:6px;padding:4px;border-bottom:1px solid var(--line);font-size:11px}
+@media(max-width:1450px){.commandbar{overflow-x:auto}.commandbar button{flex:0 0 auto}.commandbar{scrollbar-width:thin}}
