@@ -65,14 +65,12 @@ def _ensure_usage_schema(conn):
         if USAGE_READY:
             return
         with conn.cursor() as cur:
-            cur.execute("""CREATE TABLE IF NOT EXISTS usage_events (
-                event_id uuid PRIMARY KEY,
-                user_hash char(64) NOT NULL,
-                recipe text NOT NULL,
-                app_version text NOT NULL,
-                created_at timestamptz NOT NULL DEFAULT now()
-            )""")
-        conn.commit()
+            # Production uses a least-privilege role with SELECT/INSERT but no
+            # schema DDL. Do not issue CREATE TABLE IF NOT EXISTS on every new
+            # process because PostgreSQL still checks CREATE privilege.
+            cur.execute("SELECT to_regclass('public.usage_events')")
+            if cur.fetchone()[0] is None:
+                raise RuntimeError("usage_events schema has not been provisioned")
         USAGE_READY = True
 
 
