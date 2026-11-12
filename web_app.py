@@ -30,7 +30,7 @@ from sem_metrology.populations import infer_feature_classes
 from sem_metrology.shapes import analyze_circular_outlines, analyze_rectangular_features, analyze_shapes
 from sem_metrology.waveguide import analyze_waveguide, waveguide_overlay
 
-APP_VERSION = "1.2.1-web"
+APP_VERSION = "1.3.0-web"
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 MAX_UPLOAD = 20 * 1024 * 1024
@@ -76,7 +76,7 @@ def _ensure_usage_schema(conn):
         USAGE_READY = True
 
 
-def _record_usage(client_id: str, recipe: str):
+def _record_usage(client_id: str, event_name: str):
     if not client_id or len(client_id) > 200:
         return False
     conn = _usage_connection()
@@ -88,7 +88,7 @@ def _record_usage(client_id: str, recipe: str):
         user_hash = hashlib.sha256(f"{salt}:{client_id}".encode()).hexdigest()
         with conn.cursor() as cur:
             cur.execute("INSERT INTO usage_events(event_id,user_hash,recipe,app_version) VALUES (%s,%s,%s,%s)",
-                        (str(uuid.uuid4()), user_hash, recipe[:80], APP_VERSION))
+                        (str(uuid.uuid4()), user_hash, event_name[:80], APP_VERSION))
         conn.commit()
         return True
     except Exception:
@@ -100,18 +100,24 @@ def _record_usage(client_id: str, recipe: str):
 def _usage_summary():
     conn = _usage_connection()
     if conn is None:
-        return {"persistent": False, "completed_analyses": None, "unique_users": None,
+        return {"persistent": False, "visits": None, "unique_visitors": None, "completed_analyses": None,
                 "message": "Persistent usage counter is not configured."}
     try:
         _ensure_usage_schema(conn)
         with conn.cursor() as cur:
-            cur.execute("""SELECT count(*), count(DISTINCT user_hash), min(created_at), max(created_at)
+            cur.execute("""SELECT
+                             count(*) FILTER (WHERE recipe = 'page_visit'),
+                             count(DISTINCT user_hash) FILTER (WHERE recipe = 'page_visit'),
+                             count(*) FILTER (WHERE recipe <> 'page_visit'),
+                             min(created_at) FILTER (WHERE recipe = 'page_visit'),
+                             max(created_at) FILTER (WHERE recipe = 'page_visit')
                            FROM usage_events""")
-            total, users, first, last = cur.fetchone()
-        return {"persistent": True, "completed_analyses": int(total), "unique_users": int(users),
+            visits, users, analyses, first, last = cur.fetchone()
+        return {"persistent": True, "visits": int(visits), "unique_visitors": int(users),
+                "completed_analyses": int(analyses),
                 "first_use": first.isoformat() if first else None, "last_use": last.isoformat() if last else None}
     except Exception:
-        return {"persistent": False, "completed_analyses": None, "unique_users": None,
+        return {"persistent": False, "visits": None, "unique_visitors": None, "completed_analyses": None,
                 "message": "Usage counter is temporarily unavailable."}
     finally:
         conn.close()
@@ -251,11 +257,22 @@ async def analyze(
     if recommendation and recipe!=recommendation["recipe"]:warnings.append(f"Model compatibility: image has a high-confidence {recommendation['orientation']} line-space signature ({recommendation['confidence']:.0%}), but {recipe} was selected.")
     min_um=min_size_nm/1000; max_um=max_size_nm/1000
     if recipe=="circles":
-        rows,_,geometry=analyze_circular_outlines(gray,scale,min_um,max_um,sensitivity,reject_border,ref)
-        overlay=np.asarray(circle_overlay(analysis,geometry,rows))
+        target=roi or (0,0,gray.shape[1],gray.shape[0]); x,y,w,h=target
+        local_ref=None
+        if ref:
+            rx,ry,rw,rh=ref
+            if x<=rx<x+w and y<=ry<y+h: local_ref=(rx-x,ry-y,rw,rh)
+        rows,_,geometry=analyze_circular_outlines(gray[y:y+h,x:x+w],scale,min_um,max_um,sensitivity,reject_border,local_ref)
+        local=np.asarray(circle_overlay(analysis[y:y+h,x:x+w],geometry,rows)); overlay[y:y+h,x:x+w]=local
+        if roi:warnings.append("Analysis restricted to the calibrated operator crop; border rejection applies to that crop boundary.")
     elif recipe=="rectangles":
         if ref is None:raise HTTPException(400,"Draw one complete reference rectangle first")
-        rows,boxes,_=analyze_rectangular_features(gray,scale,ref,sensitivity,reject_border); overlay=np.asarray(rectangular_overlay(analysis,boxes,rows))
+        target=roi or (0,0,gray.shape[1],gray.shape[0]); x,y,w,h=target; rx,ry,rw,rh=ref
+        if not (x<=rx<x+w and y<=ry<y+h):raise HTTPException(400,"The reference feature must lie inside the selected analysis crop")
+        local_ref=(rx-x,ry-y,rw,rh)
+        rows,boxes,_=analyze_rectangular_features(gray[y:y+h,x:x+w],scale,local_ref,sensitivity,reject_border)
+        local=np.asarray(rectangular_overlay(analysis[y:y+h,x:x+w],boxes,rows)); overlay[y:y+h,x:x+w]=local
+        if roi:warnings.append("Rectangular-array proposals and border rejection were restricted to the calibrated operator crop.")
     elif recipe in ("particles","single"):
         target=roi if recipe=="single" and roi else (0,0,gray.shape[1],gray.shape[0]); x,y,w,h=target; crop=gray[y:y+h,x:x+w]
         nominal=None; template=None
@@ -269,13 +286,15 @@ async def analyze(
         local=np.asarray(shape_overlay(analysis[y:y+h,x:x+w],contours,rows)); overlay[y:y+h,x:x+w]=local
         if any(bool(row.get("Contact split")) for row in rows):warnings.append("Touching particles are visible-segment estimates; hidden boundaries are not reconstructed.")
     elif recipe=="grating":
+        target=roi or (0,0,gray.shape[1],gray.shape[0]); x,y,w,h=target; work_gray=gray[y:y+h,x:x+w]
         if orientation=="auto":
-            work=cv2.GaussianBlur(gray,(3,3),0); ex=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,1,0,ksize=3)))); ey=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,0,1,ksize=3)))); orientation="vertical" if ex>=ey else "horizontal"
+            work=cv2.GaussianBlur(work_gray,(3,3),0); ex=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,1,0,ksize=3)))); ey=float(np.mean(np.abs(cv2.Sobel(work,cv2.CV_32F,0,1,ksize=3)))); orientation="vertical" if ex>=ey else "horizontal"
         if polarity=="auto":
-            candidates=[analyze_line_space(gray,scale,p,min_um,max_um,orientation) for p in ("bright","dark")]
+            candidates=[analyze_line_space(work_gray,scale,p,min_um,max_um,orientation) for p in ("bright","dark")]
             rows,_,bands=max(candidates,key=lambda result:len(result[0]))
-        else:rows,_,bands=analyze_line_space(gray,scale,polarity,min_um,max_um,orientation)
-        overlay=np.asarray(line_space_overlay(analysis,bands,orientation))
+        else:rows,_,bands=analyze_line_space(work_gray,scale,polarity,min_um,max_um,orientation)
+        local=np.asarray(line_space_overlay(analysis[y:y+h,x:x+w],bands,orientation)); overlay[y:y+h,x:x+w]=local
+        if roi:warnings.append("Line-space statistics use only the calibrated operator crop; pitch gauges remain image-plane distances.")
     elif recipe in ("waveguide","cross_section","layer_stack"):
         if roi is None:raise HTTPException(400,"Draw an analysis ROI around the intended structure")
         x,y,w,h=roi; crop=gray[y:y+h,x:x+w]; crop_rgb=analysis[y:y+h,x:x+w]
@@ -413,6 +432,13 @@ def cancel_analysis_job(job_id: str):
 @app.get("/api/usage")
 def usage_summary():
     return _usage_summary()
+
+
+@app.post("/api/visit")
+def record_visit(client_id: str = Form(...)):
+    if not _record_usage(client_id, "page_visit"):
+        raise HTTPException(503, "Usage counter is temporarily unavailable")
+    return {"recorded": True}
 
 
 @app.get("/api/citation")
